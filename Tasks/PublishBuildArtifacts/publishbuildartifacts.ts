@@ -73,15 +73,17 @@ async function run() {
                 await powershell.exec(execOptions);
             }
             else {
-                // log if the path does not look like a UNC path (artifact creation will fail)
-                if (!artifactPath.startsWith('\\\\') || artifactPath.length < 3) {
-                    console.log(tl.loc('UncPathRequired'));
+                // file share artifacts are not currently supported on OSX/Linux.
+                let messageKey: string;
+                if (os.platform() == 'darwin') {
+                    messageKey = "ErrorFileShareOSX";
+                }
+                else {
+                    messageKey = "ErrorFileShareLinux";
                 }
 
-                console.log(tl.loc('SkippingCopy')); // todo: add fwlink to message
-
-                // create the artifact
-                tl.command("artifact.associate", data, targetPath);
+                tl.setResult(tl.TaskResult.Failed, tl.loc(messageKey));
+                return;
             }
         }
     }
