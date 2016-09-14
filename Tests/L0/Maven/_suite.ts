@@ -26,6 +26,10 @@ import {MockSonarQubeServer} from './server-mock';
 import http = require('http');
 import {IncomingMessage} from 'http';
 
+import os = require('os');
+
+var isWindows = os.type().match(/^Win/); 
+
 function setResponseFile(name: string) {
     process.env['MOCK_RESPONSES'] = path.join(__dirname, name);
 }
@@ -193,10 +197,11 @@ describe('Maven Suite', function () {
         tr.setInput('jdkVersion', 'default');
         tr.setInput('publishJUnitResults', 'true');
         tr.setInput('testResultsFiles', '**/TEST-*.xml');
-        tr.setInput('mavenOpts', '-Xmx2048m')
+        tr.setInput('mavenOpts', '-Xmx2048m');
 
         tr.setInput('checkstyleAnalysisEnabled', 'false');
         tr.setInput('pmdAnalysisEnabled', 'false');
+        tr.setInput('findbugsAnalysisEnabled', 'false');
 
         tr.run()
             .then(() => {
@@ -712,7 +717,11 @@ describe('Maven Suite', function () {
 
         tr.run()
             .then(() => {
-                assert(tr.invokedToolCount == 0, 'should not have run maven');
+                if (isWindows) { 
+                    assert(tr.invokedToolCount == 1, 'should not have run maven'); // Should have run reg query toolrunner once 
+                } else { 
+                    assert(tr.invokedToolCount == 0, 'should not have run maven'); 
+                } 
                 assert(tr.resultWasSet, 'task should have set a result');
                 assert(tr.stderr.length > 0, 'should have written to stderr');
                 assert(tr.failed, 'task should have failed');
@@ -981,6 +990,8 @@ describe('Maven Suite', function () {
         createTempDirsForSonarQubeTests();
         var testSrcDir: string = __dirname;
         var testStgDir: string = path.join(__dirname, '_temp');
+        var codeAnalysisStgDir: string = path.join(testStgDir, '.codeAnalysis'); // overall directory for all tools
+        fs.mkdirSync(codeAnalysisStgDir);
 
         mockHelper.setResponseAndBuildVars(
             path.join(__dirname, 'response.json'),
@@ -1027,239 +1038,6 @@ describe('Maven Suite', function () {
                 done(err);
             });
     });
-
-    it('maven calls enable code coverage and publish code coverage when jacoco is selected', (done) => {
-        setResponseFile('responseCodeCoverage.json');
-        var tr = new trm.TaskRunner('Maven', true);
-        tr.setInput('mavenVersionSelection', 'default');
-        tr.setInput('mavenPOMFile', 'pom.xml'); // Make that checkPath returns true for this filename in the response file
-        tr.setInput('options', '');
-        tr.setInput('goals', 'package');
-        tr.setInput('javaHomeSelection', 'JDKVersion');
-        tr.setInput('jdkVersion', 'default');
-        tr.setInput('codeCoverageTool', 'JaCoCo');
-        tr.setInput('publishJUnitResults', 'true');
-        tr.setInput('testResultsFiles', '**/TEST-*.xml');
-
-        tr.run()
-            .then(() => {
-                assert(tr.ran('/home/bin/maven/bin/mvn -version'), 'it should have run mvn -version');
-                assert(tr.ran('/home/bin/maven/bin/mvn -f pom.xml clean package'), 'it should have run mvn -f pom.xml clean package');
-                assert(tr.ran('/home/bin/maven/bin/mvn -f pom.xml jacoco:report'), 'it should have run mvn -f pom.xml jacoco:report');
-                // calls maven to generate cc report.
-                assert(tr.invokedToolCount == 3, 'should have only run maven 3 times');
-                assert(tr.resultWasSet, 'task should have set a result');
-                assert(tr.stdout.search(/##vso\[codecoverage.enable buildfile=pom.xml;summaryfile=CCReport43F6D5EF\/jacoco.xml;reportdirectory=CCReport43F6D5EF;reportbuildfile=CCReportPomA4D283EG.xml;buildtool=Maven;codecoveragetool=JaCoCo;\]/) >= 0, 'should have called enable code coverage.');
-                assert(tr.stdout.search(/##vso\[codecoverage.publish codecoveragetool=JaCoCo;summaryfile=CCReport43F6D5EF\/jacoco.xml;reportdirectory=CCReport43F6D5EF;\]/) >= 0, 'should have called publish code coverage.');
-                assert(tr.stderr.length == 0, 'should not have written to stderr');
-                assert(tr.succeeded, 'task should have succeeded');
-                done();
-            })
-            .fail((err) => {
-                assert.fail("should not have thrown error");
-                done(err);
-            });
-    })
-
-    it('maven calls enable code coverage and publish code coverage and sonar analysis when jacoco and sonar analysis is selected', function (done) {
-        // Arrange
-        createTempDirsForSonarQubeTests();
-        var testSrcDir: string = path.join(__dirname, 'data', 'taskreport-valid');
-        var testStgDir: string = path.join(__dirname, '_temp');
-
-        // not a valid PR branch
-        mockHelper.setResponseAndBuildVars(
-            path.join(__dirname, 'responseCodeCoverage.json'),
-            path.join(__dirname, 'new_response.json'),
-            [["build.sourceBranch", "refspull/6/master"], ["build.repository.provider", "TFSGit"],
-                ['build.sourcesDirectory', testSrcDir], ['build.artifactStagingDirectory', testStgDir]]);
-        var responseJsonFilePath: string = path.join(__dirname, 'new_response.json');
-        var responseJsonContent = JSON.parse(fs.readFileSync(responseJsonFilePath, 'utf-8'));
-
-        // Add fields corresponding to responses for mock filesystem operations for the following paths
-        // Staging directories
-        responseJsonContent = mockHelper.setupMockResponsesForPaths(responseJsonContent, listFolderContents(testStgDir));
-        // Test data files
-        responseJsonContent = mockHelper.setupMockResponsesForPaths(responseJsonContent, listFolderContents(testSrcDir));
-
-        // Write and set the newly-changed response file
-        var newResponseFilePath: string = path.join(__dirname, this.test.title + '_response.json');
-        fs.writeFileSync(newResponseFilePath, JSON.stringify(responseJsonContent));
-        setResponseFile(path.basename(newResponseFilePath));
-
-        var tr: trm.TaskRunner = setupDefaultMavenTaskRunner();
-        tr.setInput('sqAnalysisEnabled', 'true');
-        tr.setInput('sqConnectedServiceName', 'ID1');
-        tr.setInput('codeCoverageTool', 'JaCoCo');
-        tr.setInput('publishJUnitResults', 'true');
-
-        tr.run()
-            .then(() => {
-                assert(tr.ran('/home/bin/maven/bin/mvn -version'), 'it should have run mvn -version');
-                assert(tr.ran('/home/bin/maven/bin/mvn -f pom.xml jacoco:report'), 'it should have run mvn -f pom.xml jacoco:report');
-                assert(tr.ran('/home/bin/maven/bin/mvn -f pom.xml clean package -Dsonar.host.url=http://sonarqubeserver:9000 -Dsonar.login=uname -Dsonar.password=pword -Dsonar.jacoco.reportPath=CCReport43F6D5EF\/jacoco.exec sonar:sonar'), 'it should have run SQ analysis');
-                // calls maven to generate cc report.
-                assert(tr.invokedToolCount == 3, 'should have only run maven 3 times');
-                assert(tr.resultWasSet, 'task should have set a result');
-                assert(tr.stdout.search(/##vso\[codecoverage.enable buildfile=pom.xml;summaryfile=CCReport43F6D5EF\/jacoco.xml;reportdirectory=CCReport43F6D5EF;reportbuildfile=CCReportPomA4D283EG.xml;buildtool=Maven;codecoveragetool=JaCoCo;\]/) >= 0, 'should have called enable code coverage.');
-                assert(tr.stdout.search(/##vso\[codecoverage.publish codecoveragetool=JaCoCo;summaryfile=CCReport43F6D5EF\/jacoco.xml;reportdirectory=CCReport43F6D5EF;\]/) >= 0, 'should have called publish code coverage.');
-                assert(tr.stderr.length == 0, 'should not have written to stderr');
-                assert(tr.succeeded, 'task should have succeeded');
-                done();
-            })
-            .fail((err) => {
-                console.log(tr.stdout);
-                console.log(tr.stderr);
-                console.log(err);
-                assert.fail("should not have thrown error");
-                done(err);
-            });
-    })
-
-    it('maven calls enable code coverage and not publish code coverage when jacoco is selected and report generation failed', (done) => {
-        setResponseFile('response.json');
-        var tr = new trm.TaskRunner('Maven', true);
-        tr.setInput('mavenVersionSelection', 'default');
-        tr.setInput('mavenPOMFile', 'pom.xml'); // Make that checkPath returns true for this filename in the response file
-        tr.setInput('options', '');
-        tr.setInput('goals', 'package');
-        tr.setInput('javaHomeSelection', 'JDKVersion');
-        tr.setInput('jdkVersion', 'default');
-        tr.setInput('codeCoverageTool', 'JaCoCo');
-        tr.setInput('publishJUnitResults', 'true');
-        tr.setInput('testResultsFiles', '**/TEST-*.xml');
-
-        tr.run()
-            .then(() => {
-                assert(tr.ran('/home/bin/maven/bin/mvn -version'), 'it should have run mvn -version');
-                assert(tr.ran('/home/bin/maven/bin/mvn -f pom.xml clean package'), 'it should have run mvn -f pom.xml clean package');
-                assert(tr.ran('/home/bin/maven/bin/mvn -f pom.xml jacoco:report'), 'it should have run mvn -f pom.xml jacoco:report');
-                // calls maven to generate cc report.
-                assert(tr.invokedToolCount == 3, 'should have only run maven 3 times');
-                assert(tr.resultWasSet, 'task should have set a result');
-                assert(tr.stdout.search(/##vso\[codecoverage.enable buildfile=pom.xml;summaryfile=CCReport43F6D5EF\/jacoco.xml;reportdirectory=CCReport43F6D5EF;reportbuildfile=CCReportPomA4D283EG.xml;buildtool=Maven;codecoveragetool=JaCoCo;\]/) >= 0, 'should have called enable code coverage.');
-                assert(tr.stdout.search(/##vso\[codecoverage.publish\]/) < 0, 'should not have called publish code coverage.');
-                assert(tr.stderr.length == 0, 'should not have written to stderr');
-                assert(tr.succeeded, 'task should have succeeded');
-                done();
-            })
-            .fail((err) => {
-                assert.fail("should not have thrown error");
-                done(err);
-            });
-    })
-
-    it('maven calls enable code coverage and publish code coverage when cobertura is selected', (done) => {
-        setResponseFile('responseCodeCoverage.json');
-        var tr = new trm.TaskRunner('Maven', true);
-        tr.setInput('mavenVersionSelection', 'default');
-        tr.setInput('mavenPOMFile', 'pom.xml'); // Make that checkPath returns true for this filename in the response file
-        tr.setInput('options', '');
-        tr.setInput('goals', 'package');
-        tr.setInput('javaHomeSelection', 'JDKVersion');
-        tr.setInput('jdkVersion', 'default');
-        tr.setInput('codeCoverageTool', 'Cobertura');
-        tr.setInput('publishJUnitResults', 'true');
-        tr.setInput('testResultsFiles', '**/TEST-*.xml');
-
-        tr.run()
-            .then(() => {
-                assert(tr.ran('/home/bin/maven/bin/mvn -version'), 'it should have run mvn -version');
-                assert(tr.ran('/home/bin/maven/bin/mvn -f pom.xml clean package'), 'it should have run mvn -f pom.xml clean package');
-                assert(tr.invokedToolCount == 2, 'should have only run maven 2 times');
-                assert(tr.resultWasSet, 'task should have set a result');
-                assert(tr.stdout.search(/##vso\[codecoverage.enable buildfile=pom.xml;summaryfile=target\/site\/cobertura\/coverage.xml;reportdirectory=target\/site\/cobertura;reportbuildfile=CCReportPomA4D283EG.xml;buildtool=Maven;codecoveragetool=Cobertura;\]/) >= 0, 'should have called enable code coverage.');
-                assert(tr.stdout.search(/##vso\[codecoverage.publish codecoveragetool=Cobertura;summaryfile=target\/site\/cobertura\/coverage.xml;reportdirectory=target\/site\/cobertura;\]/) >= 0, 'should have called publish code coverage.');
-                assert(tr.stderr.length == 0, 'should not have written to stderr');
-                assert(tr.succeeded, 'task should have succeeded');
-                done();
-            })
-            .fail((err) => {
-                assert.fail("should not have thrown error");
-                done(err);
-            });
-    })
-
-    it('maven calls enable code coverage and publish code coverage and sonar analysis when cobertura is selected and sonar analysis enabled', function (done) {
-        // Arrange
-        createTempDirsForSonarQubeTests();
-        var testSrcDir: string = path.join(__dirname, 'data', 'taskreport-valid');
-        var testStgDir: string = path.join(__dirname, '_temp');
-
-        // not a valid PR branch
-        mockHelper.setResponseAndBuildVars(
-            path.join(__dirname, 'responseCodeCoverage.json'),
-            path.join(__dirname, 'new_response.json'),
-            [["build.sourceBranch", "refspull/6/master"], ["build.repository.provider", "TFSGit"],
-                ['build.sourcesDirectory', testSrcDir], ['build.artifactStagingDirectory', testStgDir]]);
-        var responseJsonFilePath: string = path.join(__dirname, 'new_response.json');
-        var responseJsonContent = JSON.parse(fs.readFileSync(responseJsonFilePath, 'utf-8'));
-
-        // Add fields corresponding to responses for mock filesystem operations for the following paths
-        // Staging directories
-        responseJsonContent = mockHelper.setupMockResponsesForPaths(responseJsonContent, listFolderContents(testStgDir));
-        // Test data files
-        responseJsonContent = mockHelper.setupMockResponsesForPaths(responseJsonContent, listFolderContents(testSrcDir));
-
-        // Write and set the newly-changed response file
-        var newResponseFilePath: string = path.join(__dirname, this.test.title + '_response.json');
-        fs.writeFileSync(newResponseFilePath, JSON.stringify(responseJsonContent));
-        setResponseFile(path.basename(newResponseFilePath));
-
-        var tr: trm.TaskRunner = setupDefaultMavenTaskRunner();
-        tr.setInput('sqAnalysisEnabled', 'true');
-        tr.setInput('sqConnectedServiceName', 'ID1');
-        tr.setInput('codeCoverageTool', 'Cobertura');
-        tr.setInput('publishJUnitResults', 'true');
-
-        tr.run()
-            .then(() => {
-                assert(tr.ran('/home/bin/maven/bin/mvn -version'), 'it should have run mvn -version');
-                assert(tr.ran('/home/bin/maven/bin/mvn -f pom.xml clean package -Dsonar.host.url=http://sonarqubeserver:9000 -Dsonar.login=uname -Dsonar.password=pword sonar:sonar'), 'it should have run SQ analysis');
-                assert(tr.invokedToolCount == 2, 'should have only run maven 2 times');
-                assert(tr.resultWasSet, 'task should have set a result');
-                assert(tr.stdout.search(/##vso\[codecoverage.enable buildfile=pom.xml;summaryfile=target\/site\/cobertura\/coverage.xml;reportdirectory=target\/site\/cobertura;reportbuildfile=CCReportPomA4D283EG.xml;buildtool=Maven;codecoveragetool=Cobertura;\]/) >= 0, 'should have called enable code coverage.');
-                assert(tr.stdout.search(/##vso\[codecoverage.publish codecoveragetool=Cobertura;summaryfile=target\/site\/cobertura\/coverage.xml;reportdirectory=target\/site\/cobertura;\]/) >= 0, 'should have called publish code coverage.');
-                assert(tr.stderr.length == 0, 'should not have written to stderr');
-                assert(tr.succeeded, 'task should have succeeded');
-                done();
-            })
-            .fail((err) => {
-                assert.fail("should not have thrown error");
-                done(err);
-            });
-    })
-
-    it('maven calls enable code coverage and not publish code coverage when cobertura is selected and report generation failed', (done) => {
-        setResponseFile('response.json');
-        var tr = new trm.TaskRunner('Maven', true);
-        tr.setInput('mavenVersionSelection', 'default');
-        tr.setInput('mavenPOMFile', 'pom.xml'); // Make that checkPath returns true for this filename in the response file
-        tr.setInput('options', '');
-        tr.setInput('goals', 'package');
-        tr.setInput('javaHomeSelection', 'JDKVersion');
-        tr.setInput('jdkVersion', 'default');
-        tr.setInput('codeCoverageTool', 'Cobertura');
-        tr.setInput('publishJUnitResults', 'true');
-        tr.setInput('testResultsFiles', '**/TEST-*.xml');
-
-        tr.run()
-            .then(() => {
-                assert(tr.ran('/home/bin/maven/bin/mvn -version'), 'it should have run mvn -version');
-                assert(tr.ran('/home/bin/maven/bin/mvn -f pom.xml clean package'), 'it should have run mvn -f pom.xml clean package');
-                assert(tr.invokedToolCount == 2, 'should have only run maven 2 times');
-                assert(tr.resultWasSet, 'task should have set a result');
-                assert(tr.stdout.search(/##vso\[codecoverage.enable buildfile=pom.xml;summaryfile=target\/site\/cobertura\/coverage.xml;reportdirectory=target\/site\/cobertura;reportbuildfile=CCReportPomA4D283EG.xml;buildtool=Maven;codecoveragetool=Cobertura;\]/) >= 0, 'should have called enable code coverage.');
-                assert(tr.stdout.search(/##vso\[codecoverage.publish\]/) < 0, 'should not have called publish code coverage.');
-                assert(tr.stderr.length == 0, 'should not have written to stderr');
-                assert(tr.succeeded, 'task should have succeeded');
-                done();
-            })
-            .fail((err) => {
-                assert.fail("should not have thrown error");
-                done(err);
-            });
-    })
 
     it('Maven build with publish test results', (done) => {
         setResponseFile('response.json');
@@ -1518,7 +1296,119 @@ describe('Maven Suite', function () {
             });
     });
 
-    it('Maven with Checkstyle & PMD - Executes Checkstyle and PMD and uploads results for both', function (done) {
+    it('Maven with FindBugs - Executes FindBugs and uploads results', function (done) {
+        // In the test data:
+        // /: pom.xml, target/.
+        // Expected: one module, root.
+
+        // Arrange
+        createTempDirsForCodeAnalysisTests();
+        var testSrcDir: string = path.join(__dirname, 'data', 'singlemodule');
+        var testStgDir: string = path.join(__dirname, '_temp');
+
+        var responseJsonFilePath: string = path.join(__dirname, 'response.json');
+        var responseJsonContent = JSON.parse(fs.readFileSync(responseJsonFilePath, 'utf-8'));
+
+        // Add fields corresponding to responses for mock filesystem operations for the following paths
+        // Staging directories
+        responseJsonContent = mockHelper.setupMockResponsesForPaths(responseJsonContent, listFolderContents(testStgDir));
+        // Test data files
+        responseJsonContent = mockHelper.setupMockResponsesForPaths(responseJsonContent, listFolderContents(testSrcDir));
+
+        // Set mocked build variables
+        responseJsonContent.getVariable = responseJsonContent.getVariable || {};
+        responseJsonContent.getVariable['build.sourcesDirectory'] = testSrcDir;
+        responseJsonContent.getVariable['build.artifactStagingDirectory'] = testStgDir;
+
+        // Write and set the newly-changed response file
+        var newResponseFilePath: string = path.join(__dirname, this.test.title + '_response.json');
+        fs.writeFileSync(newResponseFilePath, JSON.stringify(responseJsonContent));
+        setResponseFile(path.basename(newResponseFilePath));
+
+        // Set up the task runner with the test settings
+        var taskRunner: trm.TaskRunner = setupDefaultMavenTaskRunner();
+        taskRunner.setInput('findbugsAnalysisEnabled', 'true');
+
+        // Act
+        taskRunner.run()
+            .then(() => {
+                // Assert
+                assert(taskRunner.resultWasSet, 'should have set a result');
+                assert(taskRunner.stdout.length > 0, 'should have written to stdout');
+                assert(taskRunner.stderr.length == 0, 'should not have written to stderr');
+                assert(taskRunner.stdout.indexOf('task.issue type=warning;') < 0, 'should not have produced any warnings');
+                assert(taskRunner.succeeded, 'task should have succeeded');
+                assert(taskRunner.ran('/home/bin/maven/bin/mvn -f pom.xml package findbugs:findbugs'),
+                    'should have run maven with the correct arguments');
+                assert(taskRunner.stdout.indexOf('task.addattachment type=Distributedtask.Core.Summary;name=Code Analysis Report') > -1,
+                    'should have uploaded a Code Analysis Report build summary');
+                assert(taskRunner.stdout.indexOf('##vso[artifact.upload artifactname=Code Analysis Results;]') > -1,
+                    'should have uploaded a code analysis build artifact');
+
+                assertCodeAnalysisBuildSummaryContains(testStgDir, 'FindBugs found 5 violations in 1 file.');
+
+                done();
+            })
+            .fail((err) => {
+                console.log(taskRunner.stdout);
+                console.log(taskRunner.stderr);
+                console.log(err);
+                done(err);
+            });
+    });
+
+    it('Maven with FindBugs - Should succeed even if XML output cannot be found', function (done) {
+        // Arrange
+        createTempDirsForCodeAnalysisTests();
+        var testStgDir: string = path.join(__dirname, '_temp');
+        var testSrcDir: string = path.join(__dirname, 'data');
+
+        // Add test file(s) to the response file so that tl.exist() and tl.checkPath() calls return correctly
+        var srcResponseFilePath: string = path.join(__dirname, 'response.json');
+        var responseJsonContent = JSON.parse(fs.readFileSync(srcResponseFilePath, 'utf-8'));
+
+        responseJsonContent = mockHelper.setupMockResponsesForPaths(responseJsonContent, listFolderContents(testStgDir));
+        responseJsonContent = mockHelper.setupMockResponsesForPaths(responseJsonContent, listFolderContents(testSrcDir));
+
+        // Set mocked build variables
+        responseJsonContent.getVariable = responseJsonContent.getVariable || {};
+        responseJsonContent.getVariable['build.sourcesDirectory'] = testSrcDir;
+        responseJsonContent.getVariable['build.artifactStagingDirectory'] = testStgDir;
+
+        var newResponseFilePath: string = path.join(__dirname, this.test.title + '_response.json');
+        fs.writeFileSync(newResponseFilePath, JSON.stringify(responseJsonContent));
+
+        // Set the newly-changed response file
+        setResponseFile(path.basename(newResponseFilePath));
+
+        // Set up the task runner with the test settings
+        var taskRunner: trm.TaskRunner = setupDefaultMavenTaskRunner();
+        taskRunner.setInput('findbugsAnalysisEnabled', 'true');
+
+        // Act
+        taskRunner.run()
+            .then(() => {
+                // Assert
+                assert(taskRunner.succeeded, 'task should not have failed');
+                assert(taskRunner.resultWasSet, 'should have set a result');
+                assert(taskRunner.stdout.length > 0, 'should have written to stdout');
+                assert(taskRunner.stderr.length == 0, 'should not have written to stderr');
+                assert(taskRunner.stdout.indexOf('task.issue type=warning;') < 0, 'should not have produced any warnings');
+                assert(taskRunner.succeeded, 'task should have succeeded');
+                assert(taskRunner.ran('/home/bin/maven/bin/mvn -f pom.xml package findbugs:findbugs'),
+                    'should have run maven with the correct arguments');
+
+                done();
+            })
+            .fail((err) => {
+                console.log(taskRunner.stdout);
+                console.log(taskRunner.stderr);
+                console.log(err);
+                done(err);
+            });
+    });
+
+    it('Maven with Checkstyle, PMD & FindBugs - Uploads results for tools when report files are present, even if those tools are not enabled', function (done) {
         // In the test data:
         // /: pom.xml, target/.
         // Expected: one module, root.
@@ -1551,6 +1441,7 @@ describe('Maven Suite', function () {
         var taskRunner: trm.TaskRunner = setupDefaultMavenTaskRunner();
         taskRunner.setInput('checkstyleAnalysisEnabled', 'true');
         taskRunner.setInput('pmdAnalysisEnabled', 'true');
+        taskRunner.setInput('findbugsAnalysisEnabled', 'true');
 
         // Act
         taskRunner.run()
@@ -1561,7 +1452,7 @@ describe('Maven Suite', function () {
                 assert(taskRunner.stderr.length == 0, 'should not have written to stderr');
                 assert(taskRunner.stdout.indexOf('task.issue type=warning;') < 0, 'should not have produced any warnings');
                 assert(taskRunner.succeeded, 'task should have succeeded');
-                assert(taskRunner.ran('/home/bin/maven/bin/mvn -f pom.xml package checkstyle:checkstyle pmd:pmd'),
+                assert(taskRunner.ran('/home/bin/maven/bin/mvn -f pom.xml package checkstyle:checkstyle findbugs:findbugs pmd:pmd'),
                     'should have run maven with the correct arguments');
                 assert(taskRunner.stdout.indexOf('task.addattachment type=Distributedtask.Core.Summary;name=Code Analysis Report') > -1,
                     'should have uploaded a Code Analysis Report build summary');
@@ -1570,6 +1461,72 @@ describe('Maven Suite', function () {
 
                 assertCodeAnalysisBuildSummaryContains(testStgDir, 'Checkstyle found 9 violations in 2 files.');
                 assertCodeAnalysisBuildSummaryContains(testStgDir, 'PMD found 3 violations in 2 files.');
+                assertCodeAnalysisBuildSummaryContains(testStgDir, 'FindBugs found 5 violations in 1 file.');
+
+                done();
+            })
+            .fail((err) => {
+                console.log(taskRunner.stdout);
+                console.log(taskRunner.stderr);
+                console.log(err);
+                done(err);
+            });
+    });
+
+    it('Maven with Checkstyle, PMD & FindBugs - Executes and uploads results for all enabled tools', function (done) {
+        // In the test data:
+        // /: pom.xml, target/.
+        // Expected: one module, root.
+
+        // Arrange
+        createTempDirsForCodeAnalysisTests();
+        var testSrcDir: string = path.join(__dirname, 'data', 'singlemodule');
+        var testStgDir: string = path.join(__dirname, '_temp');
+
+        var responseJsonFilePath: string = path.join(__dirname, 'response.json');
+        var responseJsonContent = JSON.parse(fs.readFileSync(responseJsonFilePath, 'utf-8'));
+
+        // Add fields corresponding to responses for mock filesystem operations for the following paths
+        // Staging directories
+        responseJsonContent = mockHelper.setupMockResponsesForPaths(responseJsonContent, listFolderContents(testStgDir));
+        // Test data files
+        responseJsonContent = mockHelper.setupMockResponsesForPaths(responseJsonContent, listFolderContents(testSrcDir));
+
+        // Set mocked build variables
+        responseJsonContent.getVariable = responseJsonContent.getVariable || {};
+        responseJsonContent.getVariable['build.sourcesDirectory'] = testSrcDir;
+        responseJsonContent.getVariable['build.artifactStagingDirectory'] = testStgDir;
+
+        // Write and set the newly-changed response file
+        var newResponseFilePath: string = path.join(__dirname, this.test.title + '_response.json');
+        fs.writeFileSync(newResponseFilePath, JSON.stringify(responseJsonContent));
+        setResponseFile(path.basename(newResponseFilePath));
+
+        // Set up the task runner with the test settings
+        var taskRunner: trm.TaskRunner = setupDefaultMavenTaskRunner();
+        taskRunner.setInput('checkstyleAnalysisEnabled', 'false');
+        taskRunner.setInput('pmdAnalysisEnabled', 'false');
+        taskRunner.setInput('findbugsAnalysisEnabled', 'false');
+
+        // Act
+        taskRunner.run()
+            .then(() => {
+                // Assert
+                assert(taskRunner.resultWasSet, 'should have set a result');
+                assert(taskRunner.stdout.length > 0, 'should have written to stdout');
+                assert(taskRunner.stderr.length == 0, 'should not have written to stderr');
+                assert(taskRunner.stdout.indexOf('task.issue type=warning;') < 0, 'should not have produced any warnings');
+                assert(taskRunner.succeeded, 'task should have succeeded');
+                assert(taskRunner.ran('/home/bin/maven/bin/mvn -f pom.xml package'),
+                    'should have run maven with the correct arguments');
+                assert(taskRunner.stdout.indexOf('task.addattachment type=Distributedtask.Core.Summary;name=Code Analysis Report') > -1,
+                    'should have uploaded a Code Analysis Report build summary');
+                assert(taskRunner.stdout.indexOf('##vso[artifact.upload artifactname=Code Analysis Results;]') > -1,
+                    'should have uploaded a code analysis build artifact');
+
+                assertCodeAnalysisBuildSummaryContains(testStgDir, 'Checkstyle found 9 violations in 2 files.');
+                assertCodeAnalysisBuildSummaryContains(testStgDir, 'PMD found 3 violations in 2 files.');
+                assertCodeAnalysisBuildSummaryContains(testStgDir, 'FindBugs found 5 violations in 1 file.');
 
                 done();
             })
