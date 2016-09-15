@@ -2,25 +2,39 @@ import * as path from 'path';
 import * as assert from 'assert';
 import * as ttm from 'vsts-task-lib/mock-test';
 
-describe('Sample task tests', function () {
+describe('NuGetInstaller Suite', function () {
     before(() => {
     });
 
     after(() => {
     });
-
-    it('should succeed with simple inputs', (done: MochaDone) => {
+    it('restore single solution', (done) => {
         this.timeout(1000);
 
-        let tp = path.join(__dirname, 'singlesln.js');
+        let tp = path.join(__dirname, 'singlesln.js')
+        let tr: ttm.MockTestRunner = new ttm.MockTestRunner(tp);
+
+        tr.Run()
+        assert(tr.Ran('c:\\agent\\home\\directory\\externals\\nuget\\nuget.exe restore -NonInteractive c:\\agent\\home\\directory\\single.sln'), 'it should have run NuGet');
+        assert(tr.stdout.indexOf('NuGet output here') >= 0, "should have nuget output");
+        assert(tr.succeeded, 'should have succeeded');
+        assert(tr.invokedToolCount == 2, 'should have run NuGet and chcp');
+        assert.equal(tr.errorIssues.length, 0, "should have no errors");
+        done();
+    });
+
+    it('restore single solution, custom NuGet path, hosted', (done: MochaDone) => {
+        this.timeout(1000);
+
+        let tp = path.join(__dirname, 'singleslnCustomPath.js');
         let tr: ttm.MockTestRunner = new ttm.MockTestRunner(tp);
 
         tr.Run();
+        assert(tr.Ran('c:\\custompath\\nuget.exe restore -NonInteractive c:\\agent\\home\\directory\\single.sln'), 'it should have run NuGet');
+        assert(tr.stdout.indexOf('NuGet output here') >= 0, "should have nuget output");
         assert(tr.succeeded, 'should have succeeded');
-        assert.equal(tr.invokedToolCount, 2);
+        assert(tr.invokedToolCount == 2, 'should have run NuGet and chcp');
         assert.equal(tr.errorIssues.length, 0, "should have no errors");
-        assert(tr.stdout.indexOf('NuGet output here') >= 0, "should have run nuget");
-
         done();
     });
 });

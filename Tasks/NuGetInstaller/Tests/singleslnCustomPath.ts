@@ -8,9 +8,11 @@ let taskPath = path.join(__dirname, '..', 'nugetinstaller.js');
 let tmr: tmrm.TaskMockRunner = new tmrm.TaskMockRunner(taskPath);
 
 tmr.setInput('solution', 'single.sln');
+tmr.setInput('nuGetPath', 'c:\\custompath\\nuget.exe');
 
 let a: ma.TaskLibAnswers = <ma.TaskLibAnswers>{
     "checkPath": {
+        "c:\\custompath\\nuget.exe": true,
         "c:\\agent\\home\\directory\\single.sln": true,
         "c:\\foo\\system32\\chcp.com": true
     },
@@ -18,7 +20,7 @@ let a: ma.TaskLibAnswers = <ma.TaskLibAnswers>{
         "c:\\foo\\system32\\chcp.com":"c:\\foo\\system32\\chcp.com"
     },
     "exec": {
-        "c:\\agent\\home\\directory\\externals\\nuget\\nuget.exe restore -NonInteractive c:\\agent\\home\\directory\\single.sln": {
+        "c:\\custompath\\nuget.exe restore -NonInteractive c:\\agent\\home\\directory\\single.sln": {
             "code": 0,
             "stdout": "NuGet output here",
             "stderr": ""
@@ -30,7 +32,6 @@ let a: ma.TaskLibAnswers = <ma.TaskLibAnswers>{
         }
     },
     "exist": {
-        "c:\\agent\\home\\directory\\externals\\nuget\\nuget.exe": true,
         "c:\\agent\\home\\directory\\externals\\nuget\\CredentialProvider.TeamBuild.exe": true
     },
     "stats": {
@@ -42,9 +43,8 @@ let a: ma.TaskLibAnswers = <ma.TaskLibAnswers>{
 tmr.setAnswers(a);
 
 process.env['AGENT_HOMEDIRECTORY'] = "c:\\agent\\home\\directory";
-process.env['BUILD_SOURCESDIRECTORY'] = "c:\\agent\\home\\directory\\sources",
-process.env['ENDPOINT_AUTH_SYSTEMVSSCONNECTION'] = "{\"json\" : \"value\"}";
 process.env['ENDPOINT_URL_SYSTEMVSSCONNECTION'] = "https://example.visualstudio.com/defaultcollection";
+process.env['ENDPOINT_AUTH_SYSTEMVSSCONNECTION'] = "{\"json\" : \"value\"}";
 process.env['SYSTEM_DEFAULTWORKINGDIRECTORY'] = "c:\\agent\\home\\directory";
 process.env['SYSTEM_TEAMFOUNDATIONCOLLECTIONURI'] = "https://example.visualstudio.com/defaultcollection";
 process.env.windir = "c:\\foo";
