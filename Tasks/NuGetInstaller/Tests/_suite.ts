@@ -17,11 +17,9 @@ describe('Sample task tests', function () {
 
         tr.Run();
         assert(tr.succeeded, 'should have succeeded');
-        assert.equal(tr.invokedToolCount, 1);
-        assert.equal(tr.warningIssues.length, 0, "should have no warnings");
+        assert.equal(tr.invokedToolCount, 2);
         assert.equal(tr.errorIssues.length, 0, "should have no errors");
-        assert(tr.stdout.indexOf('atool output here') >= 0, "tool stdout");
-        assert(tr.stdout.indexOf('Hello Mock!') >= 0, "task module is called");
+        assert(tr.stdout.indexOf('NuGet output here') >= 0, "should have run nuget");
 
         done();
     });

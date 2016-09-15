@@ -42,11 +42,6 @@ let a: ma.TaskLibAnswers = <ma.TaskLibAnswers>{
 };
 tmr.setAnswers(a);
 
-/*let originalPlatform = process.platform;
-Object.defineProperty(process, 'platform', {
-    value: 'MockPlatform'
-});*/
-
 process.env['AGENT_HOMEDIRECTORY'] = "c:\\agent\\home\\directory";
 process.env['ENDPOINT_URL_SYSTEMVSSCONNECTION'] = "https://example.visualstudio.com/defaultcollection";
 process.env['ENDPOINT_AUTH_SYSTEMVSSCONNECTION'] = "{\"json\" : \"value\"}";
@@ -64,8 +59,8 @@ tmr.registerMock('./pe-parser', {
     }
 } )
 
+// Required for NuGetToolRunner
+var mtt = require('vsts-task-lib/mock-toolrunner');
+tmr.registerMock('vsts-task-lib/toolrunner', mtt);
+
 tmr.run();
-/*
-Object.defineProperty(process, 'platform', {
-    value: this.originalPlatform
-});*/
