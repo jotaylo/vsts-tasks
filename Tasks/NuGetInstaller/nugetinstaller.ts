@@ -169,11 +169,11 @@ function restorePackagesAsync(solutionFile: string, options: RestoreOptions): Q.
     nugetTool.arg(options.restoreMode);
     nugetTool.arg("-NonInteractive");
 
-    nugetTool.pathArg(solutionFile);
+    nugetTool.arg(solutionFile);
 
     if (options.configFile) {
         nugetTool.arg("-ConfigFile");
-        nugetTool.pathArg(options.configFile);
+        nugetTool.arg(options.configFile);
     }
 
     if (options.noCache) {
