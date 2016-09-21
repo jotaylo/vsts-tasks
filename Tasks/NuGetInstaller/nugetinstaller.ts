@@ -68,7 +68,7 @@ async function main(): Promise<void> {
         // locateNuGetExe() will strip them and check for existence there.
         let nuGetPath = tl.getPathInput("nuGetPath", false, false);
         let userNuGetProvided = false;
-        if(tl.filePathSupplied("nuGetPath")){
+        if(nuGetPath !== null){
             nuGetPath = nutil.stripLeadingAndTrailingQuotes(nuGetPath);
             // True if the user provided their own version of NuGet
             userNuGetProvided = true;
@@ -181,11 +181,11 @@ function restorePackagesAsync(solutionFile: string, options: RestoreOptions): Q.
     nugetTool.arg(options.restoreMode);
     nugetTool.arg("-NonInteractive");
 
-    nugetTool.pathArg(solutionFile);
+    nugetTool.arg(solutionFile);
 
     if (options.configFile) {
         nugetTool.arg("-ConfigFile");
-        nugetTool.pathArg(options.configFile);
+        nugetTool.arg(options.configFile);
     }
 
     if (options.noCache) {
