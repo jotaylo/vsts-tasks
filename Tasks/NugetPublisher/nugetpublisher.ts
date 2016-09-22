@@ -1,8 +1,3 @@
-/// <reference path="../../definitions/node.d.ts"/>
-/// <reference path="../../definitions/Q.d.ts" />
-/// <reference path="../../definitions/vsts-task-lib.d.ts" />
-/// <reference path="../../definitions/nuget-task-common.d.ts" />
-
 import * as path from "path";
 import * as Q  from "q";
 import * as tl from "vsts-task-lib/task";
@@ -33,7 +28,7 @@ async function main(): Promise<void> {
         tl.setResourcePath(path.join(__dirname, "task.json"));
 
         // set the console code page to "UTF-8"
-        if (process.platform === "win32") {
+        if (tl.osType() === 'Windows_NT') {
             tl.execSync(path.resolve(process.env.windir, "system32", "chcp.com"), ["65001"]);
         }
 
@@ -68,7 +63,7 @@ async function main(): Promise<void> {
         let nuGetPath = tl.getPathInput("nuGetPath", false, false);
         let nugetVersion = tl.getInput("nuGetversion");
         let userNuGetProvided = false;
-        if (tl.filePathSupplied("nuGetPath")) {
+        if (nuGetPath !== null) {
             nuGetPath = nutil.stripLeadingAndTrailingQuotes(nuGetPath);
             userNuGetProvided = true;
             if (nugetVersion !== "custom")
@@ -176,7 +171,7 @@ function publishPackageAsync(packageFile: string, options: PublishOptions): Q.Pr
 
     nugetTool.arg("-NonInteractive");
 
-    nugetTool.pathArg(packageFile);
+    nugetTool.arg(packageFile);
 
     nugetTool.arg(["-Source", options.feedUri]);
 
@@ -184,7 +179,7 @@ function publishPackageAsync(packageFile: string, options: PublishOptions): Q.Pr
 
     if (options.configFile) {
         nugetTool.arg("-ConfigFile");
-        nugetTool.pathArg(options.configFile);
+        nugetTool.arg(options.configFile);
     }
 
     if (options.verbosity && options.verbosity !== "-") {
