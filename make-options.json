@@ -1,7 +1,11 @@
 {
+    "//busted_tasks": [
+        "CopyFilesOverSSH"
+    ],
     "tasks": [
         "ANT",
         "AndroidBuild",
+        "AndroidSigning",
         "ArchiveFiles",
         "AzureCLI",
         "AzureCloudPowerShellDeployment",
@@ -15,7 +19,6 @@
         "CocoaPods",
         "CmdLine",
         "CopyFiles",
-        "CopyFilesOverSSH",
         "CopyPublishBuildArtifacts",
         "cURLUploader",
         "DecryptFile",
@@ -25,8 +28,10 @@
         "ExtractFiles",
         "FtpUpload",
         "Gradle",
+        "Grunt",
         "Gulp",
         "IISWebAppDeployment",
+        "JenkinsDownloadArtifacts",
         "NuGetInstaller",
         "NugetPackager",
         "powerShell",
@@ -58,6 +63,7 @@
         "package.json",
         "Strings",
         "task.json",
-        "task.loc.json"
+        "task.loc.json",
+        "Tests"
     ]
 }

@@ -3,11 +3,14 @@ require('shelljs');
 var admZip = require('adm-zip');
 var check = require('validator');
 var fs = require('fs');
+var minimatch = require('minimatch');
 var os = require('os');
 var path = require('path');
 var process = require('process');
 var ncp = require('child_process');
 var syncRequest = require('sync-request');
+
+set('-e'); // exit upon first error (shelljs)
 
 var downloadPath = path.join(__dirname, '_download');
 var testPath = path.join(__dirname, '_test');
@@ -68,7 +71,7 @@ var buildNodeTask = function (taskPath, outDir) {
     if (test('-f', rp('package.json'))) {
         run('npm install');
     }
-    run('tsc --outDir ' + outDir);
+    run('tsc --outDir ' + outDir + ' --rootDir ' + taskPath);
     cd(originalDir);
 }
 exports.buildNodeTask = buildNodeTask;
@@ -81,12 +84,7 @@ var copyTaskResources = function (taskMake, srcPath, destPath) {
     // copy the globally defined set of default task resources
     var toCopy = makeOptions['taskResources'];
     toCopy.forEach(function (item) {
-        var itemPath = path.join(srcPath, item);
-        
-        if (pathExists(itemPath)) {
-            console.log('copying ' + path.basename(itemPath));
-            cp('-R', itemPath, destPath);
-        }
+        matchCopy(item, srcPath, destPath, { noRecurse: true });
     });
 
     // copy the locally defined set of resources
@@ -96,19 +94,83 @@ var copyTaskResources = function (taskMake, srcPath, destPath) {
 }
 exports.copyTaskResources = copyTaskResources;
 
+var matchFind = function (pattern, root, options) {
+    assert(pattern, 'pattern');
+    assert(root, 'root');
+
+    // determine whether to recurse
+    options = options || {};
+    var noRecurse = options.hasOwnProperty('noRecurse') && options.noRecurse;
+    delete options.noRecurse;
+
+    // merge specified options with defaults
+    mergedOptions = { matchBase: true };
+    Object.keys(options || {}).forEach(function (key) {
+        mergedOptions[key] = options[key];
+    });
+
+    // normalize first, so we can substring later
+    root = path.resolve(root);
+
+    // determine the list of items
+    var items;
+    if (noRecurse) {
+        items = fs.readdirSync(root)
+            .map(function (name) {
+                return path.join(root, name);
+            });
+    }
+    else {
+        items = find(root)
+            .filter(function (item) { // filter out the root folder
+                return path.normalize(item) != root;
+            });
+    }
+
+    return minimatch.match(items, pattern, mergedOptions);
+}
+exports.matchFind = matchFind;
+
+var matchCopy = function (pattern, sourceRoot, destRoot, options) {
+    assert(pattern, 'pattern');
+    assert(sourceRoot, 'sourceRoot');
+    assert(destRoot, 'destRoot');
+
+    console.log(`copying ${pattern}`);
+
+    // normalize first, so we can substring later
+    sourceRoot = path.resolve(sourceRoot);
+    destRoot = path.resolve(destRoot);
+
+    matchFind(pattern, sourceRoot, options)
+        .forEach(function (item) {
+            // create the dest dir based on the relative item path
+            var relative = item.substring(sourceRoot.length + 1);
+            assert(relative, 'relative'); // should always be filterd out by matchFind
+            var dest = path.dirname(path.join(destRoot, relative));
+            mkdir('-p', dest);
+
+            cp('-R', item, dest + '/');
+        });
+}
+exports.matchCopy = matchCopy;
+
 exports.run = function (cl, echo) {
     console.log();
     console.log('> ' + cl);
+    echo = echo || process.env['TASK_BUILD_VERBOSE'];
+    var options = {
+        stdio: echo ? 'inherit' : 'pipe'
+    };
     var rc = 0;
     try {
-        var output = ncp.execSync(cl);
-
-        if (output && (echo || process.env['TASK_BUILD_VERBOSE'])) {
-            console.log(output.toString());
-        }
+        ncp.execSync(cl, options);
     }
     catch (err) {
-        console.error(err.output ? err.output.toString() : err.message);
+        if (!echo) {
+            console.error(err.output ? err.output.toString() : err.message);
+        }
+
         exit(1);
     }
 }
@@ -259,6 +321,17 @@ var copyGroup = function (group, sourceRoot, destRoot) {
         cp(source, dest);
     }
 }
+
+var removeAllFoldersNamed = function(rootPath, folderName) {
+    var matches = find(rootPath).filter(function(match) { 
+        return path.basename(match) === 'vsts-task-lib'; 
+    });
+
+    matches.forEach(function(item) {
+        rm('-Rf', item);
+    });
+}
+exports.removeAllFoldersNamed = removeAllFoldersNamed;
 
 var copyGroups = function (groups, sourceRoot, destRoot) {
     assert(groups, 'groups');
