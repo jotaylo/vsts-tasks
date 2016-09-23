@@ -1,5 +1,3 @@
-/// <reference path="../../definitions/vsts-task-lib.d.ts" />
-
 import tl = require('vsts-task-lib/task');
 import path = require('path');
 import Q = require('q');
@@ -240,6 +238,8 @@ function generateResponseFile(discoveredTests: string): Q.Promise<string> {
     selectortool.arg("/runidfile:" + runIdFile);
     selectortool.arg("/testruntitle:" + testRunTitle);
     selectortool.arg("/BaseLineFile:" + baseLineBuildIdFile);
+    selectortool.arg("/platform:" + platform);
+    selectortool.arg("/configuration:" + configuration);
 
     selectortool.exec()
         .then(function (code) {
@@ -365,13 +365,14 @@ function getVstestTestsList(vsVersion: number): Q.Promise<string> {
         argsArray.push("/TestCaseFilter:" + testFiltercriteria);
     }
 
-    var vsCommon = tl.getVariable("VS" + vsVersion + "0COMNTools");
-    if (!vsCommon) {
-        tl.error(tl.loc('VstestNotFound', vsVersion));
-        defer.resolve(tl.loc('VstestNotFound', vsVersion));
+    try {
+        vstestLocation = getVSTestLocation(vsVersion);
+    } catch (e) {
+        tl.error(e.message);
+        defer.resolve(e.message);
         return defer.promise;
     }
-    var vstestLocation = path.join(vsCommon, "..\\IDE\\CommonExtensions\\Microsoft\\TestWindow\\vstest.console.exe");
+
     var vstest = tl.createToolRunner(vstestLocation);
     addVstestArgs(argsArray, vstest);
 
@@ -386,6 +387,15 @@ function getVstestTestsList(vsVersion: number): Q.Promise<string> {
             defer.resolve(err);
         });
     return defer.promise;
+}
+
+function cleanFiles(responseFile: string, listFile: string): void {
+    tl.debug("Deleting the response file" + responseFile);
+    tl.rmRF(responseFile, true);
+    tl.debug("Deleting the discovered tests file" + listFile);
+    tl.rmRF(listFile, true);
+    tl.debug("Deleting the baseline build id file" + baseLineBuildIdFile);
+    tl.rmRF(baseLineBuildIdFile, true);    
 }
 
 function runVStest(testResultsDirectory: string, settingsFile: string, vsVersion: number): Q.Promise<number> {
@@ -419,20 +429,16 @@ function runVStest(testResultsDirectory: string, settingsFile: string, vsVersion
                                                     defer.resolve(1);
                                                 })
                                                 .finally(function () {
-                                                    tl.debug("Deleting the response file" + responseFile);
-                                                    tl.rmRF(responseFile, true);
-                                                    tl.debug("Deleting the discovered tests file" + listFile);
-                                                    tl.rmRF(listFile, true);
+                                                    cleanFiles(responseFile, listFile);
+                                                    tl.debug("Deleting the run id file" + runIdFile);
+                                                    tl.rmRF(runIdFile, true);
                                                 });
                                         })
                                         .fail(function (code) {
                                             defer.resolve(code);
                                         })
                                         .finally(function () {
-                                            tl.debug("Deleting the response file" + responseFile);
-                                            tl.rmRF(responseFile, true);
-                                            tl.debug("Deleting the discovered tests file" + listFile);
-                                            tl.rmRF(listFile, true);
+                                            cleanFiles(responseFile, listFile);
                                         });
                                 }
                                 else {
@@ -466,20 +472,16 @@ function runVStest(testResultsDirectory: string, settingsFile: string, vsVersion
                                                                         defer.resolve(1);
                                                                     })
                                                                     .finally(function () {
-                                                                        tl.debug("Deleting the response file" + responseFile);
-                                                                        tl.rmRF(responseFile, true);
-                                                                        tl.debug("Deleting the discovered tests file" + listFile);
-                                                                        tl.rmRF(listFile, true);
+                                                                        cleanFiles(responseFile, listFile);
+                                                                        tl.debug("Deleting the run id file" + runIdFile);
+                                                                        tl.rmRF(runIdFile, true);
                                                                     });
                                                             })
                                                             .fail(function (code) {
                                                                 defer.resolve(code);
                                                             })
                                                             .finally(function () {
-                                                                tl.debug("Deleting the response file" + responseFile)
-                                                                tl.rmRF(responseFile, true);
-                                                                tl.debug("Deleting the discovered tests file" + listFile);
-                                                                tl.rmRF(listFile, true);
+                                                                cleanFiles(responseFile, listFile);
                                                             });
                                                     })
                                                     .fail(function (err) {
@@ -505,19 +507,15 @@ function runVStest(testResultsDirectory: string, settingsFile: string, vsVersion
                                                                         defer.resolve(1);
                                                                     })
                                                                     .finally(function () {
-                                                                        tl.debug("Deleting the response file" + responseFile);
-                                                                        tl.rmRF(responseFile, true);
-                                                                        tl.debug("Deleting the discovered tests file" + listFile);
-                                                                        tl.rmRF(listFile, true);
+                                                                        cleanFiles(responseFile, listFile);
+                                                                        tl.debug("Deleting the run id file" + runIdFile);
+                                                                        tl.rmRF(runIdFile, true);
                                                                     });
                                                             })
                                                             .fail(function (code) {
                                                                 defer.resolve(code);
                                                             }).finally(function () {
-                                                                tl.debug("Deleting the response file" + responseFile)
-                                                                tl.rmRF(responseFile, true);
-                                                                tl.debug("Deleting the discovered tests file" + listFile);
-                                                                tl.rmRF(listFile, true);
+                                                                cleanFiles(responseFile, listFile);
                                                             });
                                                     });
                                             }
@@ -795,7 +793,7 @@ function getTestResultsDirectory(settingsFile: string, defaultResultsDirectory: 
 
 
 function getTIAssemblyQualifiedName(vsVersion: number): String {
-    return "Microsoft.VisualStudio.TraceCollector.TestImpactDataCollector, Microsoft.VisualStudio.TraceCollector, Version=" + vsVersion + ".0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a";
+    return "Microsoft.VisualStudio.TraceCollector.TestImpactDataCollector, Microsoft.VisualStudio.TraceCollector, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a";
 }
 
 function getTestImpactAttributes(vsVersion: number) {

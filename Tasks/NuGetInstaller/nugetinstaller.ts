@@ -68,7 +68,7 @@ async function main(): Promise<void> {
         // locateNuGetExe() will strip them and check for existence there.
         let nuGetPath = tl.getPathInput("nuGetPath", false, false);
         let userNuGetProvided = false;
-        if(nuGetPath !== null){
+        if(nuGetPath !== null && tl.filePathSupplied("nuGetPath")){
             nuGetPath = nutil.stripLeadingAndTrailingQuotes(nuGetPath);
             // True if the user provided their own version of NuGet
             userNuGetProvided = true;
