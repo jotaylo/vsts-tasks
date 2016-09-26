@@ -15,7 +15,7 @@ var options = minimist(process.argv, mopts);
 process.argv = options._;
 
 // modules
-require('shelljs/make');
+var make = require('shelljs/make');
 var fs = require('fs');
 var os = require('os');
 var path = require('path');
@@ -23,6 +23,11 @@ var semver = require('semver');
 var util = require('./make-util');
 
 // util functions
+var cd = util.cd;
+var cp = util.cp;
+var mkdir = util.mkdir;
+var rm = util.rm;
+var test = util.test;
 var run = util.run;
 var banner = util.banner;
 var rp = util.rp;
@@ -30,6 +35,7 @@ var fail = util.fail;
 var ensureExists = util.ensureExists;
 var pathExists = util.pathExists;
 var buildNodeTask = util.buildNodeTask;
+var buildPs3Task = util.buildPs3Task;
 var addPath = util.addPath;
 var copyTaskResources = util.copyTaskResources;
 var matchFind = util.matchFind;
@@ -53,7 +59,6 @@ var commonPath = path.join(__dirname, '_build', 'Tasks', 'Common');
 var packagePath = path.join(__dirname, '_package');
 var testTasksPath = path.join(__dirname, '_test', 'Tasks');
 var testPath = path.join(__dirname, '_test', 'Tests');
-var testTempPath = path.join(__dirname, '_test', 'Tests', 'Temp');
 
 // node min version
 var minNodeVer = '4.0.0';
@@ -106,6 +111,7 @@ target.build = function() {
         // load the task.json
         var outDir;
         var shouldBuildNode = test('-f', path.join(taskPath, 'tsconfig.json'));
+        var shouldBuildPs3 = false;
         var taskJsonPath = path.join(taskPath, 'task.json');
         if (test('-f', taskJsonPath)) {
             var taskDef = require(taskJsonPath);
@@ -118,8 +124,9 @@ target.build = function() {
             createTaskLocJson(taskPath);
             createResjson(taskDef, taskPath);
 
-            // determine whether node task
+            // determine the type of task
             shouldBuildNode = shouldBuildNode || taskDef.execution.hasOwnProperty('Node');
+            shouldBuildPs3 = taskDef.execution.hasOwnProperty('PowerShell3');
         }
         else {
             outDir = path.join(buildPath, path.basename(taskPath));
@@ -202,11 +209,14 @@ target.build = function() {
             });
         }
 
-        // ------------------
-        // Build Node Task
-        // ------------------
+        // build Node task
         if (shouldBuildNode) {
             buildNodeTask(taskPath, outDir);
+        }
+
+        // build PowerShell3 task
+        if (shouldBuildPs3) {
+            buildPs3Task(taskPath, outDir);
         }
 
         // copy default resources and any additional resources defined in the task's make.json
@@ -258,30 +268,35 @@ target.test = function() {
 target.testLegacy = function() {
     ensureTool('mocha', '--version');
 
-    // clean tests
-    rm('-Rf', testPath);
-    mkdir('-p', testPath);
+    // clean
+    console.log('removing _test');
+    rm('-Rf', path.join(__dirname, '_test'));
 
-    // copy the tasks to test folder, delete the included task libs and put mock lib at root
-    console.log('copy tasks');
+    // copy the tasks to the test dir
+    console.log();
+    console.log('> copying tasks');
     mkdir('-p', testTasksPath);
     cp('-R', path.join(buildPath, '*'), testTasksPath);
 
-    util.removeAllFoldersNamed(testTasksPath, 'vsts-task-lib');
+    // compile L0 and lib
+    var testSource = path.join(__dirname, 'Tests');
+    cd(testSource);
+    run('tsc --outDir ' + testPath + ' --rootDir ' + testSource);
 
-    // compile tests and test lib
-    cd(path.join(__dirname, 'Tests'));
-    run('tsc --outDir ' + testPath + ' --rootDir ' + path.join(__dirname, 'Tests'));
-
-    // copy the test lib dir
-    cp('-R', path.join(__dirname, 'Tests', 'lib'), testPath + '/');
-
-    // copy other
+    // copy L0 test resources
+    console.log();
+    console.log('> copying L0 resources');
     matchCopy('+(data|*.ps1|*.json)', path.join(__dirname, 'Tests', 'L0'), path.join(testPath, 'L0'), { dot: true });
 
-    // setup test temp
-    process.env['TASK_TEST_TEMP'] = testTempPath;
-    mkdir('-p', testTempPath);
+    // copy test lib resources (contains ps scripts, etc)
+    console.log();
+    console.log('> copying lib resources');
+    matchCopy('+(*.ps1|*.psm1|package.json)', path.join(__dirname, 'Tests', 'lib'), path.join(testPath, 'lib'));
+
+    // create a test temp dir - used by the task runner to copy each task to an isolated dir
+    var tempDir = path.join(testPath, 'Temp');
+    process.env['TASK_TEST_TEMP'] = tempDir;
+    mkdir('-p', tempDir);
 
     // suite path
     var suitePath = path.join(testPath, options.suite || 'L0/**', '_suite.js');
@@ -290,18 +305,50 @@ target.testLegacy = function() {
 }
 
 target.package = function() {
-    ensureTool('powershell.exe', '-NoLogo -Sta -NoProfile -NonInteractive -ExecutionPolicy Unrestricted -Command "$PSVersionTable.PSVersion.ToString()"');
-
     // clean
     rm('-Rf', packagePath);
-    matchRemove(path.join(buildPath, 'Common'), buildPath, { noRecurse: true });
-    rm('-Rf', commonPath);
-    matchRemove(path.join(buildPath, '*', 'Tests'), buildPath);
+
+    // stage the zip contents
+    console.log('> Staging zip contents');
+    var zipSourcePath = path.join(packagePath, 'zip-source');
+    mkdir('-p', zipSourcePath);
+    // process each item directly under _build/Tasks/
+    fs.readdirSync(buildPath).forEach(function (itemName) {
+        var taskSourcePath = path.join(buildPath, itemName);
+
+        // skip Common and skip files
+        if (itemName == 'Common' || !fs.statSync(taskSourcePath).isDirectory()) {
+            return;
+        }
+
+        // create the target dir
+        var taskTargetPath = path.join(zipSourcePath, itemName);
+        mkdir('-p', taskTargetPath);
+
+        // process each file/folder within the task
+        fs.readdirSync(taskSourcePath).forEach(function (itemName) {
+            // skip the Tests folder
+            if (itemName == 'Tests') {
+                return;
+            }
+
+            // create a junction point for directories, hardlink files
+            var itemSourcePath = path.join(taskSourcePath, itemName);
+            var itemTargetPath = path.join(taskTargetPath, itemName);
+            if (fs.statSync(itemSourcePath).isDirectory()) {
+                fs.symlinkSync(itemSourcePath, itemTargetPath, 'junction');
+            }
+            else {
+                fs.linkSync(itemSourcePath, itemTargetPath);
+            }
+        });
+    });
 
     // create the zip
     var zipPath = path.join(packagePath, 'pack-source', 'contents', 'Microsoft.TeamFoundation.Build.Tasks.zip');
     mkdir('-p', path.dirname(zipPath));
-    run(`powershell.exe -NoLogo -Sta -NoProfile -NonInteractive -ExecutionPolicy Unrestricted -Command "Add-Type -Assembly 'System.IO.Compression.FileSystem'; [System.IO.Compression.ZipFile]::CreateFromDirectory('${buildPath}', '${zipPath}')"`)
+    ensureTool('powershell.exe', '-NoLogo -Sta -NoProfile -NonInteractive -ExecutionPolicy Unrestricted -Command "$PSVersionTable.PSVersion.ToString()"');
+    run(`powershell.exe -NoLogo -Sta -NoProfile -NonInteractive -ExecutionPolicy Unrestricted -Command "Add-Type -Assembly 'System.IO.Compression.FileSystem'; [System.IO.Compression.ZipFile]::CreateFromDirectory('${zipSourcePath}', '${zipPath}')"`)
 
     // nuspec
     var version = options.version;
@@ -335,11 +382,28 @@ target.package = function() {
     var nupkgPath = path.join(packagePath, 'pack-target', `${pkgName}.${version}.nupkg`);
     mkdir('-p', path.dirname(nupkgPath));
     run(`nuget.exe pack ${nuspecPath} -OutputDirectory ${path.dirname(nupkgPath)}`);
+}
 
-    // used by CI that does official publish
+// used by CI that does official publish
+target.publish = function() {
     var server = options.server;
-    if (server) {
-        ensureTool('nuget3.exe', '', true);
-        run(`nuget3.exe push ${nupkgPath} -Source ${server} -apikey Skyrise`);
+    assert(server, 'server');
+
+    // resolve the nupkg path
+    var nupkgFile;
+    var nupkgDir = path.join(packagePath, 'pack-target');
+    if (!test('-d', nupkgDir)) {
+        fail('nupkg directory does not exist');
     }
+
+    var fileNames = fs.readdirSync(nupkgDir);
+    if (fileNames.length != 1) {
+        fail('Expected exactly one file under ' + nupkgDir);
+    }
+
+    nupkgFile = path.join(nupkgDir, fileNames[0]);
+
+    // publish the package
+    ensureTool('nuget3.exe', '', true);
+    run(`nuget3.exe push ${nupkgFile} -Source ${server} -apikey Skyrise`);
 }

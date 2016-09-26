@@ -1,5 +1,4 @@
 
-require('shelljs');
 var admZip = require('adm-zip');
 var check = require('validator');
 var fs = require('fs');
@@ -8,9 +7,8 @@ var os = require('os');
 var path = require('path');
 var process = require('process');
 var ncp = require('child_process');
+var shell = require('shelljs');
 var syncRequest = require('sync-request');
-
-set('-e'); // exit upon first error (shelljs)
 
 var downloadPath = path.join(__dirname, '_download');
 var testPath = path.join(__dirname, '_test');
@@ -20,7 +18,67 @@ var makeOptions = require('./make-options.json');
 // list of .NET culture names
 var cultureNames = [ 'cs', 'de', 'es', 'fr', 'it', 'ja', 'ko', 'pl', 'pt-BR', 'ru', 'tr', 'zh-Hans', 'zh-Hant' ];
 
-function assert(value, name) {
+//------------------------------------------------------------------------------
+// shell functions
+//------------------------------------------------------------------------------
+var shellAssert = function () {
+    var errMsg = shell.error();
+    if (errMsg) {
+        throw new Error(errMsg);
+    }
+}
+
+var cd = function (dir) {
+    shell.cd(dir);
+    shellAssert();
+}
+exports.cd = cd;
+
+var cp = function (options, source, dest) {
+    if (dest) {
+        shell.cp(options, source, dest);
+    }
+    else {
+        shell.cp(options, source);
+    }
+
+    shellAssert();
+}
+exports.cp = cp;
+
+var mkdir = function (options, target) {
+    if (target) {
+        shell.mkdir(options, target);
+    }
+    else {
+        shell.mkdir(options);
+    }
+
+    shellAssert();
+}
+exports.mkdir = mkdir;
+
+var rm = function (options, target) {
+    if (target) {
+        shell.rm(options, target);
+    }
+    else {
+        shell.rm(options);
+    }
+
+    shellAssert();
+}
+exports.rm = rm;
+
+var test = function (options, p) {
+    var result = shell.test(options, p);
+    shellAssert();
+    return result;
+}
+exports.test = test;
+//------------------------------------------------------------------------------
+
+var assert = function (value, name) {
     if (!value) {
         throw new Error('"' + name + '" cannot be null or empty.');
     }
@@ -75,6 +133,14 @@ var buildNodeTask = function (taskPath, outDir) {
     cd(originalDir);
 }
 exports.buildNodeTask = buildNodeTask;
+
+var buildPs3Task = function (taskPath, outDir) {
+    var packageUrl = 'https://www.powershellgallery.com/api/v2/package/VstsTaskSdk/0.7.1';
+    var packageSource = downloadArchive(packageUrl, /*omitExtensionCheck*/true);
+    var packageDest = path.join(outDir, 'ps_modules/VstsTaskSdk');
+    matchCopy('+(*.ps1|*.psd1|*.psm1|lib.json|Strings)', packageSource, packageDest, { noRecurse: true });
+}
+exports.buildPs3Task = buildPs3Task;
 
 var copyTaskResources = function (taskMake, srcPath, destPath) {
     assert(taskMake, 'taskMake');
@@ -150,7 +216,7 @@ var matchCopy = function (pattern, sourceRoot, destRoot, options) {
             var dest = path.dirname(path.join(destRoot, relative));
             mkdir('-p', dest);
 
-            cp('-R', item, dest + '/');
+            cp('-Rf', item, dest + '/');
         });
 }
 exports.matchCopy = matchCopy;
@@ -327,6 +393,7 @@ var copyGroup = function (group, sourceRoot, destRoot) {
 
     // create the destination directory
     var dest = group.dest ? path.join(destRoot, group.dest) : destRoot + '/';
+    dest = path.normalize(dest);
     mkdir('-p', dest);
 
     // copy the files
@@ -423,7 +490,6 @@ exports.getExternals = getExternals;
 //------------------------------------------------------------------------------
 // task.json functions
 //------------------------------------------------------------------------------
-
 var createResjson = function (task, taskPath) {
     var resources = {};
     if (task.hasOwnProperty('friendlyName')) {
@@ -530,3 +596,4 @@ var validateTask = function (task) {
     }
 };
 exports.validateTask = validateTask;
+//------------------------------------------------------------------------------
